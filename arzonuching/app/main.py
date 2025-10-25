@@ -221,9 +221,8 @@ def fmt_price(v: Optional[int]) -> str:
 
 def build_results_text(q: QueryState) -> str:
     head = (
-        grep -nR "✈️ <b>{q.origin" .
-grep -nR "→ {q.destination" .
-grep -nR "build_results_text" .
+        head = "<b>{} → {}</b>\n{}\n\n".format(q.origin or "?", q.destination or "?", q.depart_date.strftime("%d.%m.%Y") if q.depart_date else "—")
+
 
     )
     if not q.results:
