@@ -14,6 +14,31 @@ from aiogram.filters import CommandStart
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.enums import ParseMode
 
+async def fetch_travelpayouts(origin: str, destination: str, depart: date, limit: int = 5) -> List[dict]:
+    if not TP_API_TOKEN:
+        return []
+
+       airline = result.get("airline", "Авиакомпания")
+       origin = result.get("origin", "")
+        destination = result.get("destination", "")
+         depart_date = result.get("depart_date", "")
+          return_date = result.get("return_date", "")
+          price = result.get("price", "Цена не найдена")
+          ticket_url = result.get("url")
+
+    text = (
+      f"✈️ {origin} → {destination}\n"
+      f"🛫 Авиакомпания: {airline}\n"
+      f"📅 Даты: {depart_date} — {return_date}\n"
+      f"💰 Цена: от {price} сум"
+       )
+
+     button = InlineKeyboardButton(
+     text="Посмотреть билеты 🔎",
+     url=ticket_url
+      )
+
+keyboard = InlineKeyboardMarkup(inline_keyboard=[[button]])
 # =============================
 # ENV
 # =============================
@@ -139,29 +164,17 @@ def results_more_kb() -> InlineKeyboardMarkup:
 async def fetch_travelpayouts(origin: str, destination: str, depart: date, limit: int = 5) -> List[dict]:
     if not TP_API_TOKEN:
         return []
-   from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-airline = result.get("airline", "Авиакомпания")
-origin = result.get("origin", "")
-destination = result.get("destination", "")
-depart_date = result.get("depart_date", "")
-return_date = result.get("return_date", "")
-price = result.get("price", "Цена не найдена")
-ticket_url = result.get("url")
+      # results — это список словарей с билетами, который ты уже получил ранее из своего fetch/avia API
+# если у тебя переменная называется иначе — просто замени слово results на нужное имя
 
-text = (
-    f"✈️ {origin} → {destination}\n"
-    f"🛫 Авиакомпания: {airline}\n"
-    f"📅 Даты: {depart_date} — {return_date}\n"
-    f"💰 Цена: от {price} сум"
-)
+if not results:
+    await message.answer("Билетов не найдено")
+else:
+    for result in results:
+        text, keyboard = build_ticket_card(result)
+        await message.answer(text, reply_markup=keyboard)
 
-button = InlineKeyboardButton(
-    text="Посмотреть билеты 🔎",
-    url=ticket_url
-)
-
-keyboard = InlineKeyboardMarkup(inline_keyboard=[[button]])
 
 await message.answer(text, reply_markup=keyboard)
 
