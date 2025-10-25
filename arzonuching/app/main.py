@@ -12,6 +12,8 @@ from .payments import SERVICE_FEE_AMOUNT
 
 load_dotenv()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "change_me")
+AFFILIATE_URL = os.getenv("AFFILIATE_URL", "")
+
 
 app = FastAPI(title="ArzonUching")
 
