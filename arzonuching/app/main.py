@@ -193,7 +193,7 @@ async def pick_origin(cq: CallbackQuery, state: FSMContext):
         return
     await state.update_data(origin=code)
     await cq.message.edit_text(f"Вылет: {code}\nТеперь выбери город прилёта:")
-    await cq.message.edit_reply_markup(reply_markup=iata_keyboard("dest"))
+   await cq.message.edit_reply_markup(reply_markup=kb.as_markup())
     await state.set_state(Flow.selecting_destination)
     await cq.answer()
 
@@ -217,7 +217,7 @@ async def pick_dest(cq: CallbackQuery, state: FSMContext):
         f"Направление: { (await state.get_data()).get('origin') } → {code}\nВыбери дату вылета:"
     )
     today = date.today()
-    await cq.message.edit_reply_markup(reply_markup=dates_keyboard(today))
+   await cq.message.edit_reply_markup(reply_markup=kb.as_markup())
     await state.set_state(Flow.selecting_date)
     await cq.answer()
 
