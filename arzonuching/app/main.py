@@ -1,15 +1,16 @@
+
 from __future__ import annotations
 import os
 import asyncio
 import calendar
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import aiohttp
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import CommandStart
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -21,6 +22,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 TP_API_TOKEN = os.getenv("TP_API_TOKEN", "")  # Travelpayouts token
 AVS_API_TOKEN = os.getenv("AVS_API_TOKEN", "")  # Aviasales API token (optional)
 CURRENCY = os.getenv("CURRENCY", "uzs").lower()  # uzs, usd, rub, etc.
+MANAGERS_CHAT_ID = int(os.getenv("MANAGERS_CHAT_ID", "0"))  # Групповой чат для заявок
 
 if not BOT_TOKEN:
     raise SystemExit("Please set BOT_TOKEN env var.")
@@ -30,7 +32,7 @@ if not TP_API_TOKEN:
 # =============================
 # STATIC DATA
 # =============================
-# Popular directions (A Variant): countries mapped to primary city/airport IATA
+# Popular directions (Variant A): countries mapped to primary city/airport IATA
 COUNTRIES: Dict[str, List[Tuple[str, str]]] = {
     "🇺🇿 Узбекистан": [("Tashkent", "TAS")],
     "🇹🇷 Турция": [("Istanbul", "IST")],
@@ -39,6 +41,8 @@ COUNTRIES: Dict[str, List[Tuple[str, str]]] = {
     "🇬🇪 Грузия": [("Tbilisi", "TBS")],
     "🇰🇿 Казахстан": [("Almaty", "ALA"), ("Astana", "NQZ")],
 }
+
+PAGE_SIZE = 5
 
 # =============================
 # STATE
@@ -50,6 +54,9 @@ class QueryState:
     destination: Optional[str] = None
     destination_label: Optional[str] = None
     depart_date: Optional[date] = None
+    results: List[dict] = None
+    page: int = 0
+    selected_idx: Optional[int] = None
 
 user_state: Dict[int, QueryState] = {}
 
@@ -63,19 +70,13 @@ def countries_kb(stage: str, exclude_iata: Optional[str] = None) -> InlineKeyboa
     exclude_iata: if provided, hide options having this IATA
     """
     buttons: List[List[InlineKeyboardButton]] = []
-    row: List[InlineKeyboardButton] = []
     for country, cities in COUNTRIES.items():
         for city, iata in cities:
             if exclude_iata and iata == exclude_iata:
                 continue
             text = f"{country} ({iata})"
             cb = f"pick:{stage}:{iata}:{city}"
-            row.append(InlineKeyboardButton(text=text, callback_data=cb))
-            if len(row) == 1:
-                buttons.append(row)
-                row = []
-    if row:
-        buttons.append(row)
+            buttons.append([InlineKeyboardButton(text=text, callback_data=cb)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -84,10 +85,7 @@ def month_days(year: int, month: int) -> List[List[Optional[int]]]:
     weeks: List[List[Optional[int]]] = []
     row: List[Optional[int]] = []
     for d in cal.itermonthdays(year, month):
-        if d == 0:
-            row.append(None)
-        else:
-            row.append(d)
+        row.append(None if d == 0 else d)
         if len(row) == 7:
             weeks.append(row)
             row = []
@@ -106,10 +104,11 @@ def calendar_kb(target: date) -> InlineKeyboardMarkup:
     next_mon = (target.replace(day=28) + timedelta(days=4)).replace(day=1)
 
     rows: List[List[InlineKeyboardButton]] = []
-    rows.append([InlineKeyboardButton(text="◀️", callback_data=f"cal:prev:{prev_mon.isoformat()}"),
-                 header,
-                 InlineKeyboardButton(text="▶️", callback_data=f"cal:next:{next_mon.isoformat()}")])
-    # Weekday labels
+    rows.append([
+        InlineKeyboardButton(text="◀️", callback_data=f"cal:prev:{prev_mon.isoformat()}"),
+        header,
+        InlineKeyboardButton(text="▶️", callback_data=f"cal:next:{next_mon.isoformat()}")
+    ])
     rows.append([InlineKeyboardButton(text=t, callback_data="noop") for t in ["Mo","Tu","We","Th","Fr","Sa","Su"]])
 
     for w in weeks:
@@ -126,17 +125,22 @@ def calendar_kb(target: date) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def results_more_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Показать ещё", callback_data="res:more")],
-        [InlineKeyboardButton(text="Новый поиск", callback_data="reset")],
-    ])
+def results_kb(visible: int, start_index: int, has_more: bool) -> InlineKeyboardMarkup:
+    rows: List[List[InlineKeyboardButton]] = []
+    for i in range(visible):
+        idx = start_index + i
+        rows.append([InlineKeyboardButton(text=f"Купить #{idx+1} 💳", callback_data=f"buy:{idx}")])
+    nav: List[InlineKeyboardButton] = [InlineKeyboardButton(text="Новый поиск", callback_data="reset")]
+    if has_more:
+        nav.insert(0, InlineKeyboardButton(text="Показать ещё", callback_data="res:more"))
+    rows.append(nav)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 # =============================
 # API CLIENTS
 # =============================
 
-async def fetch_travelpayouts(origin: str, destination: str, depart: date, limit: int = 5) -> List[dict]:
+async def fetch_travelpayouts(origin: str, destination: str, depart: date, limit: int = 10) -> List[dict]:
     if not TP_API_TOKEN:
         return []
     url = (
@@ -153,12 +157,7 @@ async def fetch_travelpayouts(origin: str, destination: str, depart: date, limit
             return data.get("data", [])
 
 
-async def fetch_aviasales(origin: str, destination: str, depart: date, limit: int = 5) -> List[dict]:
-    """
-    Optional second provider. If AVS_API_TOKEN is not set, returns empty.
-    This endpoint may differ depending on your Aviasales agreement.
-    Placeholder uses the same Travelpayouts-compatible structure if available.
-    """
+async def fetch_aviasales(origin: str, destination: str, depart: date, limit: int = 10) -> List[dict]:
     if not AVS_API_TOKEN:
         return []
     # Example placeholder URL; replace with your official Aviasales endpoint
@@ -174,25 +173,22 @@ async def fetch_aviasales(origin: str, destination: str, depart: date, limit: in
                 if r.status != 200:
                     return []
                 data = await r.json()
-                # Try to align to the same schema
                 return data.get("data", [])
     except Exception:
         return []
 
 
-def merge_results(*lists: List[dict], limit: int = 10) -> List[dict]:
+def merge_results(*lists: List[dict], limit: int = 20) -> List[dict]:
     pool: List[dict] = []
     for lst in lists:
-        for x in lst:
-            pool.append(x)
-    # Normalize and sort by price
+        pool.extend(lst)
     normalized: List[dict] = []
     for item in pool:
         price = item.get("price") or item.get("value")
         airline = item.get("airline") or item.get("gate") or ""
-        link = item.get("link") or item.get("deeplink") or ""
         depart_at = item.get("departure_at") or item.get("departure_at_iso") or ""
         flight_number = item.get("flight_number") or ""
+        link = item.get("link") or item.get("deeplink") or ""  # не показываем, но сохраняем
         normalized.append({
             "price": int(price) if str(price).isdigit() else price,
             "airline": airline,
@@ -201,11 +197,10 @@ def merge_results(*lists: List[dict], limit: int = 10) -> List[dict]:
             "flight_number": flight_number,
         })
     normalized.sort(key=lambda x: (x["price"] if isinstance(x["price"], int) else 10**12))
-    # de-duplicate by link + departure time
     seen = set()
     unique: List[dict] = []
     for n in normalized:
-        k = (n.get("link"), n.get("departure_at"))
+        k = (n.get("airline"), n.get("departure_at"))
         if k in seen:
             continue
         seen.add(k)
@@ -224,23 +219,31 @@ def fmt_price(v: Optional[int]) -> str:
     return f"{v:,}".replace(",", " ") + f" {CURRENCY.upper()}"
 
 
-def build_results_text(q: QueryState, results: List[dict]) -> str:
+def build_results_text(q: QueryState) -> str:
     head = (
-        f"✈️ <b>{q.origin} → {q.destination}</b>\n"
-        f"📅 {q.depart_date.strftime('%d.%m.%Y')}\n\n"
+        f"✈️ <b>{q.origin} → {q.destination}</b>
+"
+        f"📅 {q.depart_date.strftime('%d.%m.%Y')}
+
+"
     )
-    if not results:
+    if not q.results:
         return head + "Пока нет результатов. Попробуйте другую дату или направление."
+    start = q.page * PAGE_SIZE
+    chunk = q.results[start:start + PAGE_SIZE]
+    if not chunk:
+        return head + "Все варианты показаны."
     lines = []
-    for i, r in enumerate(results, 1):
+    for i, r in enumerate(chunk, start=start + 1):
         dt = r.get("departure_at")
         dt_str = dt[:16].replace('T', ' ') if isinstance(dt, str) else "—"
         lines.append(
-            f"{i}. {fmt_price(r.get('price'))} • {r.get('airline','')}\n"
-            f"   Вылет: {dt_str}\n"
-            
+            f"{i}. {fmt_price(r.get('price'))} • {r.get('airline','')}
+"
+            f"   Вылет: {dt_str}"
         )
-    return head + "\n".join(lines)
+    return head + "
+".join(lines)
 
 # =============================
 # BOT
@@ -266,7 +269,8 @@ async def pick_origin(c: CallbackQuery):
     st.origin = iata
     st.origin_label = city
     await c.message.edit_text(
-        f"Вылет: <b>{iata}</b>\nТеперь выбери <b>страну прибытия</b>:",
+        f"Вылет: <b>{iata}</b>
+Теперь выбери <b>страну прибытия</b>:",
         reply_markup=countries_kb(stage="dest", exclude_iata=iata),
     )
     await c.answer()
@@ -278,11 +282,11 @@ async def pick_dest(c: CallbackQuery):
     st = user_state.setdefault(c.from_user.id, QueryState())
     st.destination = iata
     st.destination_label = city
-    # Open calendar for current month or next available day
     today = date.today()
     start = today if today.day <= 25 else (today.replace(day=28) + timedelta(days=4)).replace(day=1)
     await c.message.edit_text(
-        f"Маршрут: <b>{st.origin} → {st.destination}</b>\nВыбери дату вылета:",
+        f"Маршрут: <b>{st.origin} → {st.destination}</b>
+Выбери дату вылета:",
         reply_markup=calendar_kb(start),
     )
     await c.answer()
@@ -310,42 +314,113 @@ async def cal_set(c: CallbackQuery):
     chosen = date.fromisoformat(iso)
     st = user_state.setdefault(c.from_user.id, QueryState())
     st.depart_date = chosen
+    st.page = 0
     await c.message.edit_text(
-        f"Запрос: <b>{st.origin} → {st.destination}</b> | {st.depart_date.strftime('%d.%m.%Y')}\n"
+        f"Запрос: <b>{st.origin} → {st.destination}</b> | {st.depart_date.strftime('%d.%m.%Y')}
+"
         f"Ищу варианты...",
     )
     await c.answer("Ищу билеты…")
 
-    # Query providers in parallel
-    tp_task = fetch_travelpayouts(st.origin, st.destination, st.depart_date, limit=5)
-    avs_task = fetch_aviasales(st.origin, st.destination, st.depart_date, limit=5)
+    tp_task = fetch_travelpayouts(st.origin, st.destination, st.depart_date, limit=20)
+    avs_task = fetch_aviasales(st.origin, st.destination, st.depart_date, limit=20)
     tp_res, avs_res = await asyncio.gather(tp_task, avs_task)
 
-    merged = merge_results(tp_res, avs_res, limit=10)
-    text = build_results_text(st, merged)
-    await c.message.edit_text(text, reply_markup=results_more_kb(), disable_web_page_preview=True)
+    st.results = merge_results(tp_res, avs_res, limit=40)
+    text = build_results_text(st)
+    start = st.page * PAGE_SIZE
+    has_more = len(st.results) > start + PAGE_SIZE
+    kb = results_kb(visible=min(PAGE_SIZE, len(st.results) - start), start_index=start, has_more=has_more)
+    await c.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
 
 
 @dp.callback_query(F.data == "res:more")
 async def res_more(c: CallbackQuery):
     st = user_state.get(c.from_user.id)
-    if not st or not st.origin or not st.destination or not st.depart_date:
+    if not st or not st.origin or not st.destination or not st.depart_date or not st.results:
         await c.answer("Сначала выберите маршрут и дату", show_alert=True)
         return
-    tp_task = fetch_travelpayouts(st.origin, st.destination, st.depart_date, limit=10)
-    avs_task = fetch_aviasales(st.origin, st.destination, st.depart_date, limit=10)
-    tp_res, avs_res = await asyncio.gather(tp_task, avs_task)
-    merged = merge_results(tp_res, avs_res, limit=20)
-    text = build_results_text(st, merged)
-    await c.message.edit_text(text, reply_markup=results_more_kb(), disable_web_page_preview=True)
+    st.page += 1
+    text = build_results_text(st)
+    # Если текст не меняется, значит вариантов больше нет
+    if text == c.message.text:
+        await c.answer("Больше результатов нет", show_alert=True)
+        return
+    start = st.page * PAGE_SIZE
+    has_more = len(st.results) > start + PAGE_SIZE
+    kb = results_kb(visible=min(PAGE_SIZE, max(0, len(st.results) - start)), start_index=start, has_more=has_more)
+    await c.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
     await c.answer()
+
+
+@dp.callback_query(F.data.startswith("buy:"))
+async def buy_ticket(c: CallbackQuery):
+    idx = int(c.data.split(":", 1)[1])
+    st = user_state.get(c.from_user.id)
+    if not st or not st.results or idx >= len(st.results):
+        await c.answer("Элемент не найден", show_alert=True)
+        return
+    st.selected_idx = idx
+    choice = st.results[idx]
+    dt = choice.get("departure_at")
+    dt_str = dt[:16].replace('T', ' ') if isinstance(dt, str) else "—"
+    txt = (
+        f"Вы выбрали вариант #{idx+1}:
+"
+        f"Цена: {fmt_price(choice.get('price'))}
+"
+        f"Авиакомпания: {choice.get('airline','')}
+"
+        f"Вылет: {dt_str}
+
+"
+        f"Отправьте номер телефона для оформления покупки."
+    )
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Поделиться номером", request_contact=True)]], resize_keyboard=True, one_time_keyboard=True)
+    await c.message.answer(txt, reply_markup=kb)
+    await c.answer()
+
+
+@dp.message(F.contact)
+async def got_contact(m: Message):
+    st = user_state.get(m.from_user.id)
+    if not st or st.selected_idx is None or not st.results:
+        await m.answer("Спасибо! Мы свяжемся с вами.")
+        return
+    choice = st.results[st.selected_idx]
+    phone = m.contact.phone_number
+    dt = choice.get("departure_at")
+    dt_str = dt[:16].replace('T', ' ') if isinstance(dt, str) else "—"
+    text = (
+        f"🧾 Заявка на покупку билета
+"
+        f"Маршрут: {st.origin} → {st.destination}
+"
+        f"Дата: {st.depart_date.strftime('%d.%m.%Y')}
+"
+        f"Вариант: #{st.selected_idx+1}
+"
+        f"Цена: {fmt_price(choice.get('price'))}
+"
+        f"Авиакомпания: {choice.get('airline','')}
+"
+        f"Вылет: {dt_str}
+"
+        f"Телефон клиента: {phone}
+"
+        f"Пользователь: @{m.from_user.username or '-'} | {m.from_user.full_name}"
+    )
+    if MANAGERS_CHAT_ID:
+        await bot.send_message(MANAGERS_CHAT_ID, text)
+    await m.answer("Спасибо! Наш менеджер свяжется с вами в ближайшее время.")
 
 
 @dp.callback_query(F.data == "back:dest")
 async def back_to_dest(c: CallbackQuery):
     st = user_state.setdefault(c.from_user.id, QueryState())
     await c.message.edit_text(
-        f"Вылет: <b>{st.origin}</b>\nВыбери <b>страну прибытия</b>:",
+        f"Вылет: <b>{st.origin}</b>
+Выбери <b>страну прибытия</b>:",
         reply_markup=countries_kb(stage="dest", exclude_iata=st.origin),
     )
     await c.answer()
