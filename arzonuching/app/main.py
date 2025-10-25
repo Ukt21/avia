@@ -37,3 +37,23 @@ async def payme_webhook(request: Request):
     # TODO: проверить подпись / X-Auth согласно документации Payme (developer.help.paycom.uz)
     # В демо просто отвечаем 200 OK
     return {"result": "accepted"}
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
+from aiogram.filters import Command
+
+@dp.message(Command("tickets"))
+async def tickets_cmd(message: Message):
+    if not AFFILIATE_URL:
+        await message.answer("Ссылка временно недоступна.")
+        return
+    
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Найти билеты ✈️", url=AFFILIATE_URL)]
+        ]
+    )
+    
+    await message.answer(
+        "Перейдите по ссылке, чтобы найти авиабилеты:",
+        reply_markup=kb
+    )
+
