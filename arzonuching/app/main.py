@@ -139,12 +139,32 @@ def results_more_kb() -> InlineKeyboardMarkup:
 async def fetch_travelpayouts(origin: str, destination: str, depart: date, limit: int = 5) -> List[dict]:
     if not TP_API_TOKEN:
         return []
-    url = (
-        "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
-        f"?origin={origin}&destination={destination}&departure_at={depart.strftime('%Y-%m-%d')}"
-        f"&currency={CURRENCY}&limit={limit}&page=1&sorting=price&direct=false&unique=false&one_way=true"
-        f"&token={TP_API_TOKEN}"
-    )
+   from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+airline = result.get("airline", "Авиакомпания")
+origin = result.get("origin", "")
+destination = result.get("destination", "")
+depart_date = result.get("depart_date", "")
+return_date = result.get("return_date", "")
+price = result.get("price", "Цена не найдена")
+ticket_url = result.get("url")
+
+text = (
+    f"✈️ {origin} → {destination}\n"
+    f"🛫 Авиакомпания: {airline}\n"
+    f"📅 Даты: {depart_date} — {return_date}\n"
+    f"💰 Цена: от {price} сум"
+)
+
+button = InlineKeyboardButton(
+    text="Посмотреть билеты 🔎",
+    url=ticket_url
+)
+
+keyboard = InlineKeyboardMarkup(inline_keyboard=[[button]])
+
+await message.answer(text, reply_markup=keyboard)
+
     async with aiohttp.ClientSession() as s:
         async with s.get(url, timeout=20) as r:
             if r.status != 200:
