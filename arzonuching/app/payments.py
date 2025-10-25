@@ -1,34 +1,20 @@
 
-from __future__ import annotations
+# arzonuching/app/payments.py
 import os
-from typing import Optional
-from paytechuz import PayTech
-from paytechuz.providers import PaymeProvider
 
-MERCHANT_ID = os.getenv("PAYME_MERCHANT_ID", "")
-SECRET_KEY  = os.getenv("PAYME_SECRET_KEY", "")
-SERVICE_FEE_AMOUNT = int(os.getenv("SERVICE_FEE_AMOUNT", "50000"))
-CURRENCY = os.getenv("CURRENCY", "UZS")
+# Сумма сервисного сбора (оставь свою, если нужна другая)
+SERVICE_FEE_AMOUNT = 5000
 
-# Инициализация Payme провайдера (через PayTechUZ)
-payme = PayTech(
-    provider=PaymeProvider(
-        merchant_id=MERCHANT_ID,
-        secret_key=SECRET_KEY,
-        test_mode=True if os.getenv("PAYME_TEST","1") == "1" else False,
-    )
-)
+# Интеграция Payme временно отключена (на Render без paytechuz)
+PAYME_ENABLED = False
 
-def create_service_fee_invoice(user_id: int, description: str = "ArzonUching: расширенный поиск") -> dict:
-    """Создаёт инвойс на 50 000 сум и возвращает ссылку для оплаты.
-    На проде добавьте ваши order_id/transaction_id и callback_url.
+def create_service_fee_invoice(order_id: str, amount: int = SERVICE_FEE_AMOUNT) -> dict:
     """
-    order_id = f"svc_{user_id}"
-    # В некоторых интеграциях Payme требует сумму в тийинах/центах. Здесь оставляем в сумах как пример.
-    link = payme.generate_payment_link(amount=SERVICE_FEE_AMOUNT, order_id=order_id, description=description)
+    Заглушка: возвращает, что Payme выключен.
+    В будущем, когда вернём paytechuz, заменим эту функцию реальной.
+    """
     return {
-        "order_id": order_id,
-        "amount": SERVICE_FEE_AMOUNT,
-        "currency": CURRENCY,
-        "pay_link": link,
+        "status": "disabled",
+        "message": "Payme integration is disabled on this server",
+        "pay_url": ""
     }
