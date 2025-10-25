@@ -221,11 +221,10 @@ def fmt_price(v: Optional[int]) -> str:
 
 def build_results_text(q: QueryState) -> str:
     head = (
-        f"✈️ <b>{q.origin} → {q.destination}</b>
-"
-        f"📅 {q.depart_date.strftime('%d.%m.%Y')}
+        grep -nR "✈️ <b>{q.origin" .
+grep -nR "→ {q.destination" .
+grep -nR "build_results_text" .
 
-"
     )
     if not q.results:
         return head + "Пока нет результатов. Попробуйте другую дату или направление."
