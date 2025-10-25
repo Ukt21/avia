@@ -5,6 +5,62 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any
 import aiohttp
 
+TP_TOKEN  = os.getenv("TP_TOKEN", "")
+TP_MARKER = os.getenv("TP_MARKER", "")
+SUB_ID    = os.getenv("SUB_ID", "")
+CURRENCY  = os.getenv("DEFAULT_CURRENCY", "usd")
+LOCALE    = os.getenv("DEFAULT_LOCALE", "ru")
+
+import requests
+from datetime import datetime
+
+def ensure_iata(code: str) -> str:
+    c = code.strip().upper()
+    if len(c) != 3 or not c.isalpha():
+        raise ValueError(f"IATA ожидалось из 3 букв, получил: {code}")
+    return c
+
+def tp_search_prices_for_date(origin: str, destination: str, date: str):
+    o = ensure_iata(origin)
+    d = ensure_iata(destination)
+
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("Дата должна быть в формате YYYY-MM-DD")
+
+    url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
+    params = {
+        "origin": o,
+        "destination": d,
+        "departure_at": date,
+        "currency": CURRENCY,
+        "locale": LOCALE,
+        "limit": 5
+    }
+    headers = {"X-Access-Token": TP_TOKEN}
+
+    r = requests.get(url, params=params, headers=headers, timeout=15)
+    print("TP request:", r.url, "status:", r.status_code)
+    print("TP response:", r.text[:1000])
+
+    if r.status_code != 200:
+        return []
+
+    data = r.json().get("data", [])
+    if not isinstance(data, list):
+        return []
+    return data[:5]
+
+def tp_deeplink(origin: str, destination: str, date: str) -> str:
+    o = ensure_iata(origin)
+    d = ensure_iata(destination)
+    base = "https://tp.media/r"
+    qs = f"marker={TP_MARKER}&locale={LOCALE}&currency={CURRENCY}&origin={o}&destination={d}&depart_date={date}"
+    if SUB_ID:
+        qs += f"&sub_id={SUB_ID}"
+    return f"{base}?{qs}"
+
 TP_TOKEN = os.getenv("TRAVELPAYOUTS_TOKEN", "")
 AFFILIATE_MARKER = os.getenv("AFFILIATE_MARKER", "YOUR_MARKER")
 
