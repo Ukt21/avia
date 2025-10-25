@@ -201,3 +201,33 @@ async def send_affiliate_on_any_text(message: Message):
     )
     await message.answer("Нажмите, чтобы посмотреть доступные варианты:", reply_markup=kb)
 
+from .aviasales import tp_search_prices_for_date, tp_deeplink
+
+@dp.message(Command("avia"))
+async def avia_handler(msg: Message, command: CommandObject):
+    try:
+        origin, dest, date = command.args.split()
+    except Exception:
+        await msg.answer("Формат: /avia TAS MOW 2025-11-05")
+        return
+
+    try:
+        flights = tp_search_prices_for_date(origin, dest, date)
+    except Exception as e:
+        await msg.answer(f"Ошибка: {e}")
+        return
+
+    text = ""
+    if flights:
+        text += "Нашел варианты:\n"
+        for item in flights:
+            price = item.get("price")
+            airline = item.get("airline")
+            dep = item.get("departure_at", "")[:16].replace("T", " ")
+            transfers = "без пересадок" if item.get("transfers") == 0 else f"{item.get('transfers')} перес."
+            text += f"≈ {price} USD • {airline} • {transfers} • {dep}\n"
+    else:
+        text += "Прямые билеты не найдены.\n"
+
+    deeplink = tp_deeplink(origin, dest, date)
+    await msg.answer(text + "\nПолная выдача: " + deeplink)
