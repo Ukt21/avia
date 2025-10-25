@@ -177,3 +177,27 @@ async def run_search(ctx, dep_str: str):
                 "Чтобы открыть ещё 7+ вариантов, календарь цен и фильтры, оплати сервисный сбор 50 000 сум.\n"
                 f"<a href='{pay_link}'>Оплатить сервисный сбор</a>")
     await reply(msg, disable_web_page_preview=True)
+    # === Кнопка на любое сообщение ===
+import os
+from aiogram import F
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+
+AFFILIATE_URL = os.getenv("AFFILIATE_URL", "")
+
+@dp.message(F.text)
+async def send_affiliate_on_any_text(message: Message):
+    """
+    Быстрый сценарий: на любой текст даём кнопку с партнёрской ссылкой.
+    Так пользователь видит «есть билеты» на сайте-партнёре, а ты получаешь комиссию.
+    """
+    if not AFFILIATE_URL:
+        await message.answer("Ссылка временно недоступна. Попробуйте позже.")
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Смотреть билеты ✈️", url=AFFILIATE_URL)]
+        ]
+    )
+    await message.answer("Нажмите, чтобы посмотреть доступные варианты:", reply_markup=kb)
+
