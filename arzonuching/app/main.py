@@ -3,7 +3,7 @@ import os
 import asyncio
 import calendar
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -34,6 +34,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 TP_API_TOKEN = os.getenv("TP_API_TOKEN", "")      # Travelpayouts token
 AVS_API_TOKEN = os.getenv("AVS_API_TOKEN", "")    # Aviasales token (optional)
 CURRENCY = os.getenv("CURRENCY", "uzs").lower()   # uzs, usd, rub, etc.
+# Партнёрская ссылка. Шаблон опционален. Пример:
+# REF_LINK_TEMPLATE = "https://example.com/buy?o={origin}&d={destination}&dt={date}&subid={subid}"
+REF_LINK_TEMPLATE = os.getenv("REF_LINK_TEMPLATE", "")
+REF_SUBID = os.getenv("REF_SUBID", "")
 MANAGERS_CHAT_ID = int(os.getenv("MANAGERS_CHAT_ID", "0"))
 
 if not BOT_TOKEN:
@@ -72,9 +76,11 @@ class QueryState:
     destination: Optional[str] = None
     destination_label: Optional[str] = None
     depart_date: Optional[date] = None
-    results: List[dict] = None
+    return_date: Optional[date] = None
+    results: List[dict] = field(default_factory=list)
     page: int = 0
     selected_idx: Optional[int] = None
+    adding_return: bool = False
 
 user_state: Dict[int, QueryState] = {}
 
@@ -148,14 +154,17 @@ def calendar_kb(target: date, selected: Optional[date] = None) -> InlineKeyboard
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def results_kb(visible: int, start_index: int, has_more: bool) -> InlineKeyboardMarkup:
+def results_kb(visible: int, start_index: int, has_more: bool, can_add_return: bool = True) -> InlineKeyboardMarkup:
     rows: List[List[InlineKeyboardButton]] = []
     for i in range(visible):
         idx = start_index + i
         rows.append([InlineKeyboardButton(text=f"Купить #{idx+1} 💳", callback_data=f"buy:{idx}")])
-    nav = [InlineKeyboardButton(text="Новый поиск", callback_data="reset")]
+    nav = []
     if has_more:
-        nav.insert(0, InlineKeyboardButton(text="Показать ещё", callback_data="res:more"))
+        nav.append(InlineKeyboardButton(text="Показать ещё", callback_data="res:more"))
+    if can_add_return:
+        nav.append(InlineKeyboardButton(text="Добавить обратный билет ↩️", callback_data="ret:add"))
+    nav.append(InlineKeyboardButton(text="Новый поиск", callback_data="reset"))
     rows.append(nav)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -242,7 +251,10 @@ def fmt_price(v: Optional[int]) -> str:
 
 def build_results_text(q: QueryState) -> str:
     head = (
-        "✈️ <b>{} → {}</b>\n📅 {}\n\n".format(
+        "✈️ <b>{} → {}</b>
+📅 {}
+
+".format(
             q.origin or "?",
             q.destination or "?",
             q.depart_date.strftime("%d.%m.%Y") if q.depart_date else "—",
@@ -262,11 +274,13 @@ def build_results_text(q: QueryState) -> str:
         dt = r.get("departure_at")
         dt_str = dt[:16].replace("T", " ") if isinstance(dt, str) else "—"
         lines.append(
-            f"{i}. {fmt_price(r.get('price'))} • {r.get('airline','')}\n"
+            f"{i}. {fmt_price(r.get('price'))} • {r.get('airline','')}
+"
             f"   Вылет: {dt_str}"
         )
 
-    return head + "\n".join(lines)
+    return head + "
+".join(lines)
 
 # =============================
 # BOT
@@ -296,7 +310,8 @@ async def pick_origin(c: CallbackQuery):
     st = user_state.setdefault(c.from_user.id, QueryState())
     st.origin = iata; st.origin_label = city
     await c.message.edit_text(
-        f"Вылет: <b>{iata}</b>\nТеперь выбери <b>страну/город прибытия</b>:",
+        f"Вылет: <b>{iata}</b>
+Теперь выбери <b>страну/город прибытия</b>:",
         reply_markup=countries_kb(stage="dest", exclude_iata=iata),
     )
     await c.answer()
@@ -309,7 +324,8 @@ async def pick_dest(c: CallbackQuery):
     today = date.today()
     start = today if today.day <= 25 else (today.replace(day=28) + timedelta(days=4)).replace(day=1)
     await c.message.edit_text(
-        f"Маршрут: <b>{st.origin} → {st.destination}</b>\nВыбери дату вылета:",
+        f"Маршрут: <b>{st.origin} → {st.destination}</b>
+Выбери дату вылета:",
         reply_markup=calendar_kb(start, selected=st.depart_date),
     )
     await c.answer()
@@ -335,9 +351,27 @@ async def cal_set(c: CallbackQuery):
     iso = c.data.split(":", 2)[2]
     chosen = date.fromisoformat(iso)
     st = user_state.setdefault(c.from_user.id, QueryState())
+    if st.adding_return:
+        st.return_date = chosen
+        st.adding_return = False
+        await c.answer("Дата обратного вылета выбрана")
+        # Вернёмся к результатам туда (если уже были)
+        text = build_results_text(st)
+        start_idx = st.page * PAGE_SIZE
+        has_more = len(st.results) > start_idx + PAGE_SIZE
+        kb = results_kb(
+            visible=min(PAGE_SIZE, len(st.results) - start_idx),
+            start_index=start_idx,
+            has_more=has_more,
+            can_add_return=st.return_date is None,
+        )
+        await c.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
+        return
+
     st.depart_date = chosen; st.page = 0
     await c.message.edit_text(
-        "Запрос: <b>{} → {}</b> | {}\nИщу варианты...".format(
+        "Запрос: <b>{} → {}</b> | {}
+Ищу варианты...".format(
             st.origin, st.destination, st.depart_date.strftime("%d.%m.%Y")
         )
     )
@@ -351,7 +385,12 @@ async def cal_set(c: CallbackQuery):
     text = build_results_text(st)
     start_idx = st.page * PAGE_SIZE
     has_more = len(st.results) > start_idx + PAGE_SIZE
-    kb = results_kb(visible=min(PAGE_SIZE, len(st.results) - start_idx), start_index=start_idx, has_more=has_more)
+    kb = results_kb(
+        visible=min(PAGE_SIZE, len(st.results) - start_idx),
+        start_index=start_idx,
+        has_more=has_more,
+        can_add_return=st.return_date is None,
+    )
     await c.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
 
 @dp.callback_query(F.data == "res:more")
@@ -367,7 +406,12 @@ async def res_more(c: CallbackQuery):
         return
     start_idx = st.page * PAGE_SIZE
     has_more = len(st.results) > start_idx + PAGE_SIZE
-    kb = results_kb(visible=min(PAGE_SIZE, max(0, len(st.results) - start_idx)), start_index=start_idx, has_more=has_more)
+    kb = results_kb(
+        visible=min(PAGE_SIZE, max(0, len(st.results) - start_idx)),
+        start_index=start_idx,
+        has_more=has_more,
+        can_add_return=st.return_date is None,
+    )
     await c.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
     await c.answer()
 
@@ -382,10 +426,15 @@ async def buy_ticket(c: CallbackQuery):
     dt = choice.get("departure_at")
     dt_str = dt[:16].replace("T", " ") if isinstance(dt, str) else "—"
     txt = (
-        "Вы выбрали вариант #{}:\n"
-        "Цена: {}\n"
-        "Авиакомпания: {}\n"
-        "Вылет: {}\n\n"
+        "Вы выбрали вариант #{}:
+"
+        "Цена: {}
+"
+        "Авиакомпания: {}
+"
+        "Вылет: {}
+
+"
         "Отправьте номер телефона для оформления покупки."
     ).format(idx + 1, fmt_price(choice.get("price")), choice.get("airline", ""), dt_str)
     kb = ReplyKeyboardMarkup(
@@ -406,14 +455,22 @@ async def got_contact(m: Message):
     dt = choice.get("departure_at")
     dt_str = dt[:16].replace("T", " ") if isinstance(dt, str) else "—"
     text = (
-        "🧾 Заявка на покупку билета\n"
-        "Маршрут: {} → {}\n"
-        "Дата: {}\n"
-        "Вариант: #{}\n"
-        "Цена: {}\n"
-        "Авиакомпания: {}\n"
-        "Вылет: {}\n"
-        "Телефон клиента: {}\n"
+        "🧾 Заявка на покупку билета
+"
+        "Маршрут: {} → {}
+"
+        "Дата: {}
+"
+        "Вариант: #{}
+"
+        "Цена: {}
+"
+        "Авиакомпания: {}
+"
+        "Вылет: {}
+"
+        "Телефон клиента: {}
+"
         "Пользователь: @{} | {}"
     ).format(
         st.origin, st.destination,
@@ -435,7 +492,8 @@ async def got_contact(m: Message):
 async def back_to_dest(c: CallbackQuery):
     st = user_state.setdefault(c.from_user.id, QueryState())
     await c.message.edit_text(
-        f"Вылет: <b>{st.origin}</b>\nВыбери <b>страну/город прибытия</b>:",
+        f"Вылет: <b>{st.origin}</b>
+Выбери <b>страну/город прибытия</b>:",
         reply_markup=countries_kb(stage="dest", exclude_iata=st.origin),
     )
     await c.answer()
@@ -460,7 +518,8 @@ async def cal_near_7(c: CallbackQuery):
         price = r[0].get("price") if r else None
         lines.append(f"• {d.strftime('%d.%m.%Y')} — {fmt_price(price) if price else '—'}")
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="↩️ Назад к календарю", callback_data=f"cal:back:{base.replace(day=1).isoformat()}")]])
-    await c.message.edit_text("\n".join(lines), reply_markup=kb)
+    await c.message.edit_text("
+".join(lines), reply_markup=kb)
     await c.answer()
 
 @dp.callback_query(F.data.startswith("cal:back:"))
@@ -469,7 +528,8 @@ async def cal_back(c: CallbackQuery):
     target = date.fromisoformat(iso)
     st = user_state.setdefault(c.from_user.id, QueryState())
     await c.message.edit_text(
-        f"Маршрут: <b>{st.origin} → {st.destination}</b>\nВыбери дату вылета:",
+        f"Маршрут: <b>{st.origin} → {st.destination}</b>
+Выбери дату вылета:",
         reply_markup=calendar_kb(target, selected=st.depart_date),
     )
     await c.answer()
