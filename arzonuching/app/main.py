@@ -260,6 +260,9 @@ async def on_start(m: Message):
         reply_markup=countries_kb(stage="origin"),
     )
 
+@dp.message(F.text == "/ping")
+async def ping(m: Message):
+    await m.answer("pong")
 
 @dp.callback_query(F.data.startswith("pick:origin:"))
 async def pick_origin(c: CallbackQuery):
