@@ -36,7 +36,7 @@ AVS_API_TOKEN = os.getenv("AVS_API_TOKEN", "")    # Aviasales token (optional)
 CURRENCY = os.getenv("CURRENCY", "uzs").lower()   # uzs, usd, rub, etc.
 
 # Твой групповой чат. Берём из ENV, а если пусто — используем предоставленное значение.
-MANAGERS_CHAT_ID = int(os.getenv("MANAGERS_CHAT_ID", "-1004816970168"))
+MANAGERS_CHAT_ID = int(os.getenv("MANAGERS_CHAT_ID", "-1003243966206"))
 
 if not BOT_TOKEN:
     raise SystemExit("Please set BOT_TOKEN env var.")
