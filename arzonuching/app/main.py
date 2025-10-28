@@ -237,8 +237,8 @@ def fmt_price(v: Optional[int]) -> str:
 
 
 def build_results_text(q: QueryState) -> str:
-    head = "✈️ <b>{} → {}</b>"
-📅 {}
+    head = "✈️ <b>{} → {}</b>
+📅 {}"
 
 ".format(
         q.origin or "?",
