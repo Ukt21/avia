@@ -269,14 +269,12 @@ def build_results_text(q: QueryState) -> str:
     head_lines.append("")  # пустая строка
 
     if not q.results:
-        return "
-".join(head_lines + ["Пока нет результатов. Попробуйте другую дату или направление."])
+        return "\n".join(head_lines + ["Пока нет результатов. Попробуйте другую дату или направление."])
 
     start = q.page * PAGE_SIZE
     chunk = q.results[start:start + PAGE_SIZE]
     if not chunk:
-        return "
-".join(head_lines + ["Все варианты показаны."])
+        return "\n".join(head_lines + ["Все варианты показаны."])
 
     lines: List[str] = []
     for i, r in enumerate(chunk, start=start + 1):
@@ -289,12 +287,13 @@ def build_results_text(q: QueryState) -> str:
         airline = r.get("airline", "")
         price = fmt_price(r.get("price"))
         lines.append(
-            f"{i}) 💸 {price}
-"
-            f"✈️ {airline}
-"
+            f"{i}) 💸 {price}\n"
+            f"✈️ {airline}\n"
             f"⏰ Вылет: {d_show} • {t_show}"
         )
+
+    return "\n".join(head_lines + lines) + "\n"
+
 
     return "
 ".join(head_lines + lines) + "
