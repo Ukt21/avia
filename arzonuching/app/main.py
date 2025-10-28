@@ -57,7 +57,6 @@ COUNTRIES: Dict[str, List[Tuple[str, str]]] = {
     "🇰🇿 Казахстан": [("Almaty", "ALA"), ("Astana", "NQZ")],
 }
 
-# Русские названия месяцев и дней недели
 MONTHS_RU = [
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
@@ -83,6 +82,20 @@ class QueryState:
     adding_return: bool = False
 
 user_state: Dict[int, QueryState] = {}
+
+# =============================
+# HELPERS
+# =============================
+
+def flag_for_iata(iata: Optional[str]) -> str:
+    if not iata:
+        return "✈️"
+    for country, cities in COUNTRIES.items():
+        for _city, code in cities:
+            if code == iata:
+                # country like "🇹🇷 Турция" → take first token
+                return country.split()[0]
+    return "✈️"
 
 # =============================
 # KEYBOARDS
@@ -246,30 +259,31 @@ def fmt_price(v: Optional[int]) -> str:
 
 
 def build_results_text(q: QueryState) -> str:
-    head = f"✈️ {q.origin or '?'} → {q.destination or '?'}
-"
-    head += f"📅 {q.depart_date.strftime('%d.%m.%Y') if q.depart_date else '—'}
-"
+    # Заголовок с флагами стран (Вариант B)
+    head_lines = [
+        f"{flag_for_iata(q.origin)} {q.origin or '?'} → {flag_for_iata(q.destination)} {q.destination or '?'}",
+        f"📅 {q.depart_date.strftime('%d.%m.%Y') if q.depart_date else '—'}",
+    ]
     if q.return_date:
-        head += f"↩️ Обратно: {q.return_date.strftime('%d.%m.%Y')}
-"
-    head += "
-"
+        head_lines.append(f"↩️ Обратно: {q.return_date.strftime('%d.%m.%Y')}")
+    head_lines.append("")  # пустая строка
 
     if not q.results:
-        return head + "Пока нет результатов. Попробуйте другую дату или направление."
+        return "
+".join(head_lines + ["Пока нет результатов. Попробуйте другую дату или направление."])
 
     start = q.page * PAGE_SIZE
     chunk = q.results[start:start + PAGE_SIZE]
     if not chunk:
-        return head + "Все варианты показаны."
+        return "
+".join(head_lines + ["Все варианты показаны."])
 
     lines: List[str] = []
     for i, r in enumerate(chunk, start=start + 1):
         dt = r.get("departure_at")
         d_show, t_show = "—", "—"
         if isinstance(dt, str) and len(dt) >= 16 and "-" in dt and "T" in dt:
-            y, m, d = dt[:10].split("-")
+            _y, m, d = dt[:10].split("-")
             d_show = f"{d}.{m}"
             t_show = dt[11:16]
         airline = r.get("airline", "")
@@ -282,8 +296,8 @@ def build_results_text(q: QueryState) -> str:
             f"⏰ Вылет: {d_show} • {t_show}"
         )
 
-    return head + "
-".join(lines) + "
+    return "
+".join(head_lines + lines) + "
 "
 
 # =============================
@@ -464,7 +478,12 @@ async def buy_ticket(c: CallbackQuery):
     )
     await c.message.answer(txt, reply_markup=kb)
     if ref_url:
-        await c.message.answer("Готово к оплате:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Купить на сайте", url=ref_url)]]))
+        await c.message.answer(
+            "Готово к оплате:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="Купить на сайте", url=ref_url)]]
+            ),
+        )
     await c.answer()
 
 @dp.message(F.contact)
