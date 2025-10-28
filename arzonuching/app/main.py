@@ -237,8 +237,34 @@ def fmt_price(v: Optional[int]) -> str:
 
 
 def build_results_text(q: QueryState) -> str:
-    head = "✈️ <b>{} → {}</b>
-📅 {}"
+    # Формируем заголовок без f-строки, всё в одной строке с \n
+    head = (
+        "✈️ <b>{} → {}</b>\n📅 {}\n\n".format(
+            q.origin or "?",
+            q.destination or "?",
+            q.depart_date.strftime("%d.%m.%Y") if q.depart_date else "—",
+        )
+    )
+
+    if not q.results:
+        return head + "Пока нет результатов. Попробуйте другую дату или направление."
+
+    start = q.page * PAGE_SIZE
+    chunk = q.results[start:start + PAGE_SIZE]
+    if not chunk:
+        return head + "Все варианты показаны."
+
+    lines = []
+    for i, r in enumerate(chunk, start=start + 1):
+        dt = r.get("departure_at")
+        dt_str = dt[:16].replace("T", " ") if isinstance(dt, str) else "—"
+        lines.append(
+            f"{i}. {fmt_price(r.get('price'))} • {r.get('airline','')}\n"
+            f"   Вылет: {dt_str}"
+        )
+
+    return head + "\n".join(lines)
+
 
 ".format(
         q.origin or "?",
