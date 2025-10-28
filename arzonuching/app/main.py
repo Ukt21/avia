@@ -252,7 +252,11 @@ def fmt_price(v: Optional[int]) -> str:
 def build_results_text(q: QueryState) -> str:
     # Шапка результатов (стиль C)
     head = (
-        "✈️ <b>{} → {}</b>
+        text = f"""
+✈️ <b>{origin} → {destination}</b>
+📅 {date}
+"""
+    
 ".format(q.origin or "?", q.destination or "?") +
         "📅 {}
 ".format(q.depart_date.strftime("%d.%m.%Y") if q.depart_date else "—")
