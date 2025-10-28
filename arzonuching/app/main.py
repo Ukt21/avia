@@ -250,16 +250,18 @@ def fmt_price(v: Optional[int]) -> str:
 
 
 def build_results_text(q: QueryState) -> str:
+    # Шапка результатов (стиль C)
     head = (
         "✈️ <b>{} → {}</b>
-📅 {}
-
-".format(
-            q.origin or "?",
-            q.destination or "?",
-            q.depart_date.strftime("%d.%m.%Y") if q.depart_date else "—",
-        )
+".format(q.origin or "?", q.destination or "?") +
+        "📅 {}
+".format(q.depart_date.strftime("%d.%m.%Y") if q.depart_date else "—")
     )
+    if q.return_date:
+        head += "↩️ Обратно: {}
+".format(q.return_date.strftime("%d.%m.%Y"))
+    head += "
+"
 
     if not q.results:
         return head + "Пока нет результатов. Попробуйте другую дату или направление."
@@ -269,18 +271,28 @@ def build_results_text(q: QueryState) -> str:
     if not chunk:
         return head + "Все варианты показаны."
 
-    lines = []
+    lines: List[str] = []
     for i, r in enumerate(chunk, start=start + 1):
         dt = r.get("departure_at")
-        dt_str = dt[:16].replace("T", " ") if isinstance(dt, str) else "—"
+        # Форматируем дату/время вылета как DD.MM • HH:MM
+        d_show, t_show = "—", "—"
+        if isinstance(dt, str) and len(dt) >= 16 and "-" in dt and "T" in dt:
+            y, m, d = dt[:10].split("-")
+            d_show = f"{d}.{m}"
+            t_show = dt[11:16]
+        airline = r.get("airline", "")
+        price = fmt_price(r.get("price"))
         lines.append(
-            f"{i}. {fmt_price(r.get('price'))} • {r.get('airline','')}
+            f"{i}) 💸 {price}
 "
-            f"   Вылет: {dt_str}"
+            f"✈️ {airline}
+"
+            f"⏰ Вылет: {d_show} • {t_show}"
         )
 
     return head + "
-".join(lines)
+".join(lines) + "
+"
 
 # =============================
 # BOT
