@@ -295,7 +295,7 @@ def build_results_text(q: QueryState) -> str:
     return "\n".join(head_lines + lines) + "\n"
 
     return "
-             ".join(head_lines + lines) + "
+     ".join(head_lines + lines) + "
 "
 
 # =============================
